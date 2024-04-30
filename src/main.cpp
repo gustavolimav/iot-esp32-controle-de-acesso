@@ -12,24 +12,22 @@
 
 #include <Keypad.h>
 
-#define ROW_NUM 4             // four rows
-#define COLUMN_NUM 3          // four columns
-#define SEND_PING_DELAY 10000 // 10k millisegundos para mandar o ping
-#define DOOR_DELAY 3000       // 3k millisegundos de porta aberta
-#define SS_PIN 5              // ESP32 pin GPIO5
-#define RST_PIN 22            // ESP32 pin GPIO27
-#define RELAY_PIN 15          // pino da porta amarelo
-#define RELAY_NEGADO 4        // pino do negado vermelho
-#define RELAY_PERMITIDO 21    // pino verde do permitido
-#define BUTTON_PIN 34         // pino de input de check da porta aberta
-#define MAGNET_PIN 32
+#define ROW_NUM 4          // four rows
+#define COLUMN_NUM 3       // four columns
+#define DOOR_DELAY 3000    // 3k miliseconds to close the door
+#define SS_PIN 5           // ESP32 pin GPIO5
+#define RST_PIN 22         // ESP32 pin GPIO27
+#define RELAY_PIN 15       // pin state door yellow
+#define RELAY_NEGADO 4     // pin rejected red
+#define RELAY_PERMITIDO 21 // pin authorized green
+#define BUTTON_PIN 34      // pin button authorized open door
+#define MAGNET_PIN 32      // pin input magnet door is open
 
 MFRC522 rfid(SS_PIN, RST_PIN);
 
 const String password = "7890"; // change your password here
 String input_password;
 
-// ---------------------
 #include "secrets.h"
 #include <WiFiClientSecure.h>
 #include <MQTTClient.h>
@@ -51,8 +49,6 @@ unsigned long closeDoorMillis = 0;
 unsigned long greenLedMillis = 0;
 unsigned long redLedMillis = 0;
 bool DoorFlag = false;
-
-// const IPAddress remote_ip(8, 8, 8, 8);
 
 void OpenDoor()
 {
@@ -81,10 +77,10 @@ void AlarmBuzz()
 
 void messageHandler(String &topic, String &payload)
 {
-  Serial.println("incoming: " + topic + " - " + payload);
+  Serial.println("Incoming: " + topic + " - " + payload);
 
   if (payload[19] == '1')
-  { // open door
+  {
     OpenDoor();
     unsigned long currentMillis = millis();
     closeDoorMillis = currentMillis + DOOR_DELAY;
@@ -93,9 +89,6 @@ void messageHandler(String &topic, String &payload)
   {
     AlarmBuzz();
   }
-  //  StaticJsonDocument<200> doc;
-  //  deserializeJson(doc, payload);
-  //  const char* message = doc["message"];
 }
 
 void connectAWS()
@@ -139,6 +132,7 @@ void connectAWS()
   // Subscribe to a topic
   client.subscribe(AWS_IOT_SUBSCRIBE_TOPIC);
   client.subscribe(AWS_DOOR_SUBSCRIBE_TOPIC);
+
   Serial.println(AWS_IOT_SUBSCRIBE_TOPIC);
   Serial.println("AWS IoT Connected!");
 }
@@ -146,7 +140,7 @@ void connectAWS()
 void publishMessagePINPAD(String &letter)
 {
   StaticJsonDocument<200> doc;
-  // doc["time"] = millis();
+
   doc["sensor_a0"] = letter; // analogRead(0);
   char jsonBuffer[512];
   serializeJson(doc, jsonBuffer); // print to client
@@ -157,7 +151,7 @@ void publishMessagePINPAD(String &letter)
 void publishMessage(String &letter)
 {
   StaticJsonDocument<200> doc;
-  // doc["time"] = millis();
+
   doc["sensor_a0"] = letter; // analogRead(0);
   char jsonBuffer[512];
   serializeJson(doc, jsonBuffer); // print to client
@@ -176,10 +170,7 @@ void publishMessageDoor(String &letter)
   serializeJson(doc, jsonBuffer); // print to client
 
   client.publish(AWS_IOT_PUBLISH_DOOR, jsonBuffer);
-  // client.publish(AWS_IOT_PUBLISH_DOOR, letter);
 }
-
-// ---------------------
 
 void setup()
 {
@@ -193,17 +184,8 @@ void setup()
   pinMode(RELAY_NEGADO, OUTPUT);
   pinMode(RELAY_PERMITIDO, OUTPUT);
   Serial.println("Tap an RFID/NFC tag on the RFID-RC522 reader");
-  // --
   connectAWS();
-  // --
 }
-
-// char keys[ROW_NUM][COLUMN_NUM] = {
-//   {'1', '2', '3', 'A'},
-//   {'4', '5', '6', 'B'},
-//   {'7', '8', '9', 'C'},
-//   {'*', '0', '#', 'D'}
-// };
 
 char keys[ROW_NUM][COLUMN_NUM] = {
     {'1', '2', '3'},
@@ -324,9 +306,8 @@ void read_rfid()
       MFRC522::PICC_Type piccType = rfid.PICC_GetType(rfid.uid.sak);
       Serial.println(rfid.PICC_GetTypeName(piccType));
 
-      // print UID in Serial Monitor in the hex format
       Serial.print("UID: ");
-      String uidString = ""; // Initialize an empty String variable to store the UID
+      String uidString = "";
 
       for (int i = 0; i < rfid.uid.size; i++)
       {
@@ -336,25 +317,8 @@ void read_rfid()
 
       Serial.println(uidString);
       publishMessage(uidString);
-      // if (rfid.uid.uidByte[0] == keyTagUID[0] &&
-      //         rfid.uid.uidByte[1] == keyTagUID[1] &&
-      //         rfid.uid.uidByte[2] == keyTagUID[2] &&
-      //         rfid.uid.uidByte[3] == keyTagUID[3] ) {
-      //   OpenDoor();
-      //   closeDoorMillis = currentMillis + DOOR_DELAY;
-      //   delay(200);
-      // }
-      // else
-      // {
-      //   Serial.print("\nAccess denied");
-      //   for(int i=0;i<5;i++){
-      //     digitalWrite(RELAY_NEGADO, HIGH);
-      //     delay(200);
-      //     digitalWrite(RELAY_NEGADO, LOW);
-      //     delay(200);
-      //   }
-      // }
       Serial.println();
+
       rfid.PICC_HaltA();      // halt PICC
       rfid.PCD_StopCrypto1(); // stop encryption on PCD
     }
@@ -375,7 +339,6 @@ void loop()
 
   oldSensor = read_sensor(oldSensor, currentSensorPin);
 
-  // Serial.println(digitalRead(MAGNET_PIN));
   unsigned long currentMillis = millis();
   static unsigned long lastkeypadMillis = 0;
 
@@ -383,12 +346,6 @@ void loop()
 
   client.onMessage(messageHandler);
 
-  // if (currentMillis - previousMillis >= SEND_PING_DELAY) {
-  //   String defaultString = "0";
-  //   publishMessage(defaultString);
-  //   Serial.println("comunicacao");
-  //   previousMillis = currentMillis;
-  // }
   if ((currentMillis >= closeDoorMillis) and (closeDoorMillis != 0))
   {
     CloseDoor();
