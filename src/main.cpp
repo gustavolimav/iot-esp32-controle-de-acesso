@@ -178,7 +178,7 @@ void setup()
   input_password.reserve(32);
   SPI.begin();     // init SPI bus
   rfid.PCD_Init(); // init MFRC522
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(BUTTON_PIN, INPUT_PULLDOWN);
   pinMode(MAGNET_PIN, INPUT_PULLUP);
   pinMode(RELAY_PIN, OUTPUT);
   pinMode(RELAY_NEGADO, OUTPUT);
@@ -236,11 +236,11 @@ int read_button(int oldButton, int currentButtonPin)
   {
     if (currentButtonPin == 1)
     {
-      digitalWrite(RELAY_PERMITIDO, HIGH);
+      digitalWrite(RELAY_PERMITIDO, LOW);
     }
     else
     {
-      digitalWrite(RELAY_PERMITIDO, LOW);
+      digitalWrite(RELAY_PERMITIDO, HIGH);
     }
 
     buttonState = String(currentButtonPin);
