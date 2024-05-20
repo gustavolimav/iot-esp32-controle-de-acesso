@@ -9,8 +9,12 @@
 #include <SPI.h>
 #include <MFRC522.h>
 #include "WiFi.h"
-
 #include <Keypad.h>
+#include "secrets.h"
+#include <WiFiClientSecure.h>
+#include <MQTTClient.h>
+#include <ArduinoJson.h>
+#include <HTTPClient.h>
 
 #define ROW_NUM 4          // four rows
 #define COLUMN_NUM 3       // four columns
@@ -22,23 +26,17 @@
 #define RELAY_PERMITIDO 21 // pin authorized green
 #define BUTTON_PIN 34      // pin button authorized open door
 #define MAGNET_PIN 32      // pin input magnet door is open
-
-MFRC522 rfid(SS_PIN, RST_PIN);
-
-const String password = "7890"; // change your password here
-String input_password;
-
-#include "secrets.h"
-#include <WiFiClientSecure.h>
-#include <MQTTClient.h>
-#include <ArduinoJson.h>
-
 // The MQTT topics that this device should publish/subscribe
 #define AWS_IOT_PUBLISH_PINPAD "esp32/pinPad"
 #define AWS_IOT_PUBLISH_TOPIC "esp32/pub_dgp"
 #define AWS_IOT_PUBLISH_DOOR "esp32/door"
 #define AWS_IOT_SUBSCRIBE_TOPIC "esp32/open_door"
 #define AWS_DOOR_SUBSCRIBE_TOPIC "esp32/test_access"
+
+MFRC522 rfid(SS_PIN, RST_PIN);
+
+const String password = "7890"; // change your password here
+String input_password;
 
 WiFiClientSecure net = WiFiClientSecure();
 MQTTClient client = MQTTClient(256);
@@ -49,6 +47,9 @@ unsigned long closeDoorMillis = 0;
 unsigned long greenLedMillis = 0;
 unsigned long redLedMillis = 0;
 bool DoorFlag = false;
+
+// Elasticsearch
+const char *serverName = "http://172.26.119.197:9202/iot/_doc/";
 
 void OpenDoor()
 {
@@ -337,8 +338,56 @@ int currentButtonPin = 0;
 int oldSensor = 1;
 int currentSensorPin = 0;
 
+unsigned long previousMillis2 = 0; // Stores the last time data was sent to Elasticsearch
+const long interval = 60000;
+
+void monitor_elasticsearch() {
+  unsigned long currentMillis2 = millis();
+
+  if (currentMillis2 - previousMillis2 >= interval)
+  {
+    previousMillis2 = currentMillis2;
+    HTTPClient http;
+
+    Serial.println("Connecting to Elasticsearch...");
+    http.begin(serverName);
+    http.addHeader("Content-Type", "application/json");
+
+    String timestamp = String(currentMillis2 / 1000);
+
+    // Construir JSON com dados de telemetria
+    // Utilizar Métricas definidas e mocalas
+    StaticJsonDocument<200> jsonDoc;
+    jsonDoc["device"] = "ESP32";
+    jsonDoc["status"] = "active";
+    jsonDoc["rfid"] = "12345";
+    jsonDoc["access"] = "granted";
+    jsonDoc["timestamp"] = timestamp;
+
+    String jsonData;
+    serializeJson(jsonDoc, jsonData);
+
+    int httpResponseCode = http.POST(jsonData);
+
+    if (httpResponseCode > 0)
+    {
+      String response = http.getString();
+      Serial.println(httpResponseCode);
+      Serial.println(response);
+    }
+    else
+    {
+      Serial.print("Error on sending POST: ");
+      Serial.println(httpResponseCode);
+    }
+
+    http.end();
+  }
+}
+
 void loop()
 {
+  monitor_elasticsearch();
 
   oldButton = read_button(oldButton, currentButtonPin);
 
