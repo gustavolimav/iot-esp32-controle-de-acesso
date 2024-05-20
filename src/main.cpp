@@ -16,7 +16,7 @@
 #define COLUMN_NUM 3       // four columns
 #define DOOR_DELAY 3000    // 3k miliseconds to close the door
 #define SS_PIN 5           // ESP32 pin GPIO5
-#define RST_PIN 22         // ESP32 pin GPIO27
+#define RST_PIN 22         // ESP32 pin GPIO22
 #define RELAY_PIN 15       // pin state door yellow
 #define RELAY_NEGADO 4     // pin rejected red
 #define RELAY_PERMITIDO 21 // pin authorized green
@@ -206,17 +206,18 @@ int read_sensor(int oldSensor, int currentSensorPin)
 
   if (currentSensorPin != oldSensor)
   {
-    Serial.print("Door is: ");
-    Serial.println(currentSensorPin);
-
     if (currentSensorPin == 1)
     {
+      Serial.println("Door is Closed");
       digitalWrite(RELAY_PIN, LOW);
     }
     else
     {
+      Serial.println("Door is Open");
       digitalWrite(RELAY_PIN, HIGH);
     }
+
+    Serial.println("-----------------");
 
     sensorState = String(currentSensorPin);
     publishMessageDoor(sensorState);
@@ -236,12 +237,16 @@ int read_button(int oldButton, int currentButtonPin)
   {
     if (currentButtonPin == 1)
     {
+      Serial.println("Button Released");
       digitalWrite(RELAY_PERMITIDO, LOW);
     }
     else
     {
+      Serial.println("Button Pressed");
       digitalWrite(RELAY_PERMITIDO, HIGH);
     }
+
+    Serial.println("-----------------");
 
     buttonState = String(currentButtonPin);
     publishMessageDoor(buttonState);
