@@ -26,6 +26,7 @@
 #define RELAY_PERMITIDO 21 // pin authorized green
 #define BUTTON_PIN 34      // pin button authorized open door
 #define MAGNET_PIN 32      // pin input magnet door is open
+
 // The MQTT topics that this device should publish/subscribe
 #define AWS_IOT_PUBLISH_PINPAD "esp32/pinPad"
 #define AWS_IOT_PUBLISH_TOPIC "esp32/pub_dgp"
@@ -33,34 +34,59 @@
 #define AWS_IOT_SUBSCRIBE_TOPIC "esp32/open_door"
 #define AWS_DOOR_SUBSCRIBE_TOPIC "esp32/test_access"
 
-MFRC522 rfid(SS_PIN, RST_PIN);
+// AWS IoT certificate
+WiFiClientSecure net = WiFiClientSecure();
+MQTTClient client = MQTTClient(256);
+
+unsigned long closeDoorMillis = 0;
+
+// Elasticsearch
+const char *serverName = "http://172.26.119.197:9202/iot/_doc/";
+unsigned long previousPingMillis = 0; // Stores the last time data was sent to Elasticsearch
+const long pingInterval = 60000;
+
+// Button
+
+int oldButton = 0;
+int currentButtonPin = 0;
+
+// Magnet
+
+int oldSensor = 1;
+int currentSensorPin = 0;
+
+// Keypad
 
 const String password = "7890"; // change your password here
 String input_password;
 
-WiFiClientSecure net = WiFiClientSecure();
-MQTTClient client = MQTTClient(256);
+char keys[ROW_NUM][COLUMN_NUM] = {
+    {'1', '2', '3'},
+    {'4', '5', '6'},
+    {'7', '8', '9'},
+    {'*', '0', '#'}};
 
-unsigned long previousMillis = 0;
-unsigned long openDoorMillis = 0;
-unsigned long closeDoorMillis = 0;
-unsigned long greenLedMillis = 0;
-unsigned long redLedMillis = 0;
-bool DoorFlag = false;
+byte pin_rows[ROW_NUM] = {27, 12, 14, 13};  //  connect to the row pins
+byte pin_column[COLUMN_NUM] = {33, 25, 26}; // connect to the column pins
+// byte keyTagUID[4] = {0x0D, 0x95, 0xBE, 0x00}; //code to open dor
 
-// Elasticsearch
-const char *serverName = "http://172.26.119.197:9202/iot/_doc/";
+Keypad keypad = Keypad(makeKeymap(keys), pin_rows, pin_column, ROW_NUM, COLUMN_NUM);
+
+// Rfid
+
+MFRC522 rfid(SS_PIN, RST_PIN);
+
+// Code
 
 void OpenDoor()
 {
   Serial.println("DOOR IS OPENING!");
   digitalWrite(RELAY_PERMITIDO, HIGH);
-  openDoorMillis = 0;
 }
 
 void CloseDoor()
 {
-  Serial.println("DOOR IS CLOSING");
+  Serial.println("DOOR IS CLOSING!");
   digitalWrite(RELAY_PERMITIDO, LOW);
   closeDoorMillis = 0;
 }
@@ -160,8 +186,9 @@ void publishMessage(String &letter)
   client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
 }
 
-void publishMessageDoor(String &letter)
+void publishMessageDoor(int state)
 {
+  String letter = String(state);
   StaticJsonDocument<200> doc;
   String milisString;
   milisString = String(millis());
@@ -173,36 +200,8 @@ void publishMessageDoor(String &letter)
   client.publish(AWS_IOT_PUBLISH_DOOR, jsonBuffer);
 }
 
-void setup()
+void read_sensor()
 {
-  Serial.begin(115200);
-  input_password.reserve(32);
-  SPI.begin();     // init SPI bus
-  rfid.PCD_Init(); // init MFRC522
-  pinMode(BUTTON_PIN, INPUT_PULLDOWN);
-  pinMode(MAGNET_PIN, INPUT_PULLUP);
-  pinMode(RELAY_PIN, OUTPUT);
-  pinMode(RELAY_NEGADO, OUTPUT);
-  pinMode(RELAY_PERMITIDO, OUTPUT);
-  Serial.println("Tap an RFID/NFC tag on the RFID-RC522 reader");
-  connectAWS();
-}
-
-char keys[ROW_NUM][COLUMN_NUM] = {
-    {'1', '2', '3'},
-    {'4', '5', '6'},
-    {'7', '8', '9'},
-    {'*', '0', '#'}};
-
-byte pin_rows[ROW_NUM] = {27, 12, 14, 13};  //  connect to the row pins
-byte pin_column[COLUMN_NUM] = {33, 25, 26}; // connect to the column pins
-// byte keyTagUID[4] = {0x0D, 0x95, 0xBE, 0x00}; //code to open dor
-
-int read_sensor(int oldSensor, int currentSensorPin)
-{
-
-  String sensorState;
-
   currentSensorPin = !digitalRead(MAGNET_PIN);
 
   if (currentSensorPin != oldSensor)
@@ -220,18 +219,13 @@ int read_sensor(int oldSensor, int currentSensorPin)
 
     Serial.println("-----------------");
 
-    sensorState = String(currentSensorPin);
-    publishMessageDoor(sensorState);
+    publishMessageDoor(currentSensorPin);
     oldSensor = currentSensorPin;
   }
-
-  return oldSensor;
 }
 
-int read_button(int oldButton, int currentButtonPin)
+void read_button()
 {
-  String buttonState;
-
   currentButtonPin = !digitalRead(BUTTON_PIN);
 
   if (currentButtonPin != oldButton)
@@ -249,56 +243,65 @@ int read_button(int oldButton, int currentButtonPin)
 
     Serial.println("-----------------");
 
-    buttonState = String(currentButtonPin);
-    publishMessageDoor(buttonState);
+    publishMessageDoor(currentButtonPin);
     oldButton = currentButtonPin;
   }
-
-  return oldButton;
 }
 
-void read_keypad(Keypad keypad, long currentMillis)
+void read_keypad()
 {
-  char key = keypad.getKey();
-  if (key)
+  unsigned long currentMillis = millis();
+  static unsigned long lastkeypadMillis = 0;
+
+  if ((currentMillis >= closeDoorMillis) and (closeDoorMillis != 0))
   {
-    Serial.println(key);
-    if (key == '*')
+    CloseDoor();
+  }
+
+  if (currentMillis >= lastkeypadMillis + 50)
+  {
+    char key = keypad.getKey();
+    if (key)
     {
-      input_password = ""; // clear input password
-    }
-    else if (key == '#')
-    {
-      if (password == input_password)
+      Serial.println(key);
+      if (key == '*')
       {
-        Serial.print("Input password is: ");
-        Serial.println(input_password);
-        publishMessagePINPAD(input_password);
-        Serial.println("The password is correct, ACCESS GRANTED!");
-        OpenDoor();
-        closeDoorMillis = currentMillis + DOOR_DELAY;
+        input_password = ""; // clear input password
+      }
+      else if (key == '#')
+      {
+        if (password == input_password)
+        {
+          Serial.print("Input password is: ");
+          Serial.println(input_password);
+          publishMessagePINPAD(input_password);
+          Serial.println("The password is correct, ACCESS GRANTED!");
+          OpenDoor();
+          closeDoorMillis = millis() + DOOR_DELAY;
+        }
+        else
+        {
+          Serial.print("Input password is: ");
+          Serial.println(input_password);
+          publishMessagePINPAD(input_password);
+          Serial.println("\nThe password is incorrect, ACCESS DENIED!");
+          for (int i = 0; i < 5; i++)
+          {
+            digitalWrite(RELAY_NEGADO, HIGH);
+            delay(200);
+            digitalWrite(RELAY_NEGADO, LOW);
+            delay(200);
+          }
+        }
+
+        input_password = ""; // clear input password
       }
       else
       {
-        Serial.print("Input password is: ");
-        Serial.println(input_password);
-        publishMessagePINPAD(input_password);
-        Serial.println("\nThe password is incorrect, ACCESS DENIED!");
-        for (int i = 0; i < 5; i++)
-        {
-          digitalWrite(RELAY_NEGADO, HIGH);
-          delay(200);
-          digitalWrite(RELAY_NEGADO, LOW);
-          delay(200);
-        }
+        input_password += key; // append new character to input password string
       }
-
-      input_password = ""; // clear input password
     }
-    else
-    {
-      input_password += key; // append new character to input password string
-    }
+    lastkeypadMillis = currentMillis;
   }
 }
 
@@ -331,29 +334,20 @@ void read_rfid()
   }
 }
 
-Keypad keypad = Keypad(makeKeymap(keys), pin_rows, pin_column, ROW_NUM, COLUMN_NUM);
-int oldButton = 0;
-int currentButtonPin = 0;
+void monitor_elasticsearch()
+{
+  unsigned long currentPingMillis = millis();
 
-int oldSensor = 1;
-int currentSensorPin = 0;
-
-unsigned long previousMillis2 = 0; // Stores the last time data was sent to Elasticsearch
-const long interval = 60000;
-
-void monitor_elasticsearch() {
-  unsigned long currentMillis2 = millis();
-
-  if (currentMillis2 - previousMillis2 >= interval)
+  if (currentPingMillis - previousPingMillis >= pingInterval)
   {
-    previousMillis2 = currentMillis2;
+    previousPingMillis = currentPingMillis;
     HTTPClient http;
 
     Serial.println("Connecting to Elasticsearch...");
     http.begin(serverName);
     http.addHeader("Content-Type", "application/json");
 
-    String timestamp = String(currentMillis2 / 1000);
+    String timestamp = String(currentPingMillis / 1000);
 
     // Construir JSON com dados de telemetria
     // Utilizar Métricas definidas e mocalas
@@ -385,31 +379,33 @@ void monitor_elasticsearch() {
   }
 }
 
+void setup()
+{
+  Serial.begin(115200);
+  input_password.reserve(32);
+  SPI.begin();     // init SPI bus
+  rfid.PCD_Init(); // init MFRC522
+  pinMode(BUTTON_PIN, INPUT_PULLDOWN);
+  pinMode(MAGNET_PIN, INPUT_PULLUP);
+  pinMode(RELAY_PIN, OUTPUT);
+  pinMode(RELAY_NEGADO, OUTPUT);
+  pinMode(RELAY_PERMITIDO, OUTPUT);
+  Serial.println("Tap an RFID/NFC tag on the RFID-RC522 reader");
+  connectAWS();
+}
+
 void loop()
 {
-  monitor_elasticsearch();
-
-  oldButton = read_button(oldButton, currentButtonPin);
-
-  oldSensor = read_sensor(oldSensor, currentSensorPin);
-
-  unsigned long currentMillis = millis();
-  static unsigned long lastkeypadMillis = 0;
-
   client.loop();
 
   client.onMessage(messageHandler);
+  monitor_elasticsearch();
 
-  if ((currentMillis >= closeDoorMillis) and (closeDoorMillis != 0))
-  {
-    CloseDoor();
-  }
+  read_button();
 
-  if (currentMillis >= lastkeypadMillis + 500)
-  {
-    read_keypad(keypad, currentMillis);
-    lastkeypadMillis = currentMillis;
-  }
+  read_sensor();
+
+  read_keypad();
 
   read_rfid();
 }
