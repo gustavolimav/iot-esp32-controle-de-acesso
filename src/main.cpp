@@ -40,11 +40,6 @@ MQTTClient client = MQTTClient(256);
 
 unsigned long closeDoorMillis = 0;
 
-// Elasticsearch
-const char *serverName = "http://172.26.119.197:9202/iot/_doc/";
-unsigned long previousPingMillis = 0; // Stores the last time data was sent to Elasticsearch
-const long pingInterval = 60000;
-
 // Button
 
 int oldButton = 0;
@@ -175,7 +170,7 @@ void publishMessagePINPAD(String &letter)
   client.publish(AWS_IOT_PUBLISH_PINPAD, jsonBuffer);
 }
 
-void publishMessage(String &letter)
+void publishMessageRFID(String &letter)
 {
   StaticJsonDocument<200> doc;
 
@@ -325,57 +320,12 @@ void read_rfid()
       }
 
       Serial.println(uidString);
-      publishMessage(uidString);
+      publishMessageRFID(uidString);
       Serial.println();
 
       rfid.PICC_HaltA();      // halt PICC
       rfid.PCD_StopCrypto1(); // stop encryption on PCD
     }
-  }
-}
-
-void monitor_elasticsearch()
-{
-  unsigned long currentPingMillis = millis();
-
-  if (currentPingMillis - previousPingMillis >= pingInterval)
-  {
-    previousPingMillis = currentPingMillis;
-    HTTPClient http;
-
-    Serial.println("Connecting to Elasticsearch...");
-    http.begin(serverName);
-    http.addHeader("Content-Type", "application/json");
-
-    String timestamp = String(currentPingMillis / 1000);
-
-    // Construir JSON com dados de telemetria
-    // Utilizar Métricas definidas e mocalas
-    StaticJsonDocument<200> jsonDoc;
-    jsonDoc["device"] = "ESP32";
-    jsonDoc["status"] = "active";
-    jsonDoc["rfid"] = "12345";
-    jsonDoc["access"] = "granted";
-    jsonDoc["timestamp"] = timestamp;
-
-    String jsonData;
-    serializeJson(jsonDoc, jsonData);
-
-    int httpResponseCode = http.POST(jsonData);
-
-    if (httpResponseCode > 0)
-    {
-      String response = http.getString();
-      Serial.println(httpResponseCode);
-      Serial.println(response);
-    }
-    else
-    {
-      Serial.print("Error on sending POST: ");
-      Serial.println(httpResponseCode);
-    }
-
-    http.end();
   }
 }
 
@@ -399,7 +349,6 @@ void loop()
   client.loop();
 
   client.onMessage(messageHandler);
-  monitor_elasticsearch();
 
   read_button();
 
